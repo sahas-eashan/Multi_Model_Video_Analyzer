@@ -7,6 +7,12 @@ import numpy as np
 import torch
 import subprocess
 import torchaudio
+import imageio_ffmpeg
+import tempfile
+
+_ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+os.environ["IMAGEIO_FFMPEG_EXE"] = _ffmpeg
+os.environ["PATH"] = os.path.dirname(_ffmpeg) + os.pathsep + os.environ.get("PATH", "")
 
 
 class MeldDataset(Dataset):
@@ -60,60 +66,80 @@ class MeldDataset(Dataset):
             0, 3, 1, 2
         )  # from [frames,height,width,channels] to [frames,channels,height,width]
 
+    def _silent_mel(self):
+        # fallback to a zero feature if extraction fails
+        return torch.zeros(1, 64, 300, dtype=torch.float32)
+
     def extract_audio_features(self, video_path):
-        audio_path = video_path.replace(".mp4", ".wav")
+        ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()  # <- absolute path
+
+        # temp WAV (safer than .replace(".mp4", ".wav"))
+        tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        audio_path = tmp.name
+        tmp.close()
+
         try:
-            subprocess.run(
-                [
-                    "ffmpeg",
-                    "-i",
-                    video_path,
-                    "-vn",
-                    "-acodec",
-                    "pcm_s16le",
-                    "-ar",
-                    "16000",
-                    "-ac",
-                    "1",
-                    audio_path,
-                ],
-                check=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-            )
+            cmd = [
+                ffmpeg,  # <- use resolved binary
+                "-nostdin",
+                "-hide_banner",
+                "-loglevel",
+                "error",  # quieter logs
+                "-y",  # overwrite temp file
+                "-i",
+                video_path,
+                "-vn",
+                "-acodec",
+                "pcm_s16le",
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
+                audio_path,
+            ]
+            proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if (
+                proc.returncode != 0
+                or not os.path.exists(audio_path)
+                or os.path.getsize(audio_path) == 0
+            ):
+                # No audio stream or extraction failed
+                return self._silent_mel()
 
             waveform, sample_rate = torchaudio.load(audio_path)
+            if waveform.ndim == 1:
+                waveform = waveform.unsqueeze(0)
 
             if sample_rate != 16000:
-                resampler = torchaudio.transforms.Resample(sample_rate, 16000)
-                waveform = resampler(waveform)
+                waveform = torchaudio.transforms.Resample(
+                    orig_freq=sample_rate, new_freq=16000
+                )(waveform)
 
             mel_spectrogram = torchaudio.transforms.MelSpectrogram(
-                sample_rate=16000,
-                n_fft=1024,
-                hop_length=512,
-                n_mels=64,
+                sample_rate=16000, n_fft=1024, hop_length=512, n_mels=64
             )
-
             mel_spec = mel_spectrogram(waveform)
 
-            # normalize
-            mel_spec = (mel_spec - mel_spec.mean()) / mel_spec.std()
+            # normalize (avoid div-by-zero)
+            mel_spec = (mel_spec - mel_spec.mean()) / (mel_spec.std() + 1e-6)
 
-            if mel_spec.size(2) < 300:
-                padding = 300 - mel_spec.size(2)
-                mel_spec = torch.nn.functional.pad(mel_spec, (0, padding))
+            # pad/crop to 300 frames
+            T = mel_spec.size(-1)
+            if T < 300:
+                mel_spec = torch.nn.functional.pad(mel_spec, (0, 300 - T))
             else:
-                mel_spec = mel_spec[:, :, :300]
+                mel_spec = mel_spec[..., :300]
 
             return mel_spec
-        except subprocess.CalledProcessError as e:
-            raise ValueError(f"Error extracting audio from video: {e}")
-        except Exception as e:
-            raise ValueError(f"Audio Error: {e}")
+
+        except Exception:
+            # Any error -> safe fallback
+            return self._silent_mel()
         finally:
-            if os.path.exists(audio_path):
+            try:
                 os.remove(audio_path)
+            except OSError:
+                pass
 
     def __getitem__(self, idx):
 

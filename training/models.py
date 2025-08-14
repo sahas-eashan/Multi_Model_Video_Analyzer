@@ -2,11 +2,12 @@ import torch
 import torch.nn as nn
 from transformers import BertModel
 from torchvision import models as vision_models
-from meld_dataset import MeldDataset
+from .meld_dataset import MeldDataset  # Changed to relative import
 from sklearn.metrics import accuracy_score, precision_score
 from torch.utils.tensorboard import SummaryWriter
 from datetime import datetime
 import os
+import torch.nn.functional as F
 
 
 class TextEncoder(nn.Module):
@@ -129,45 +130,79 @@ class MultimodelSentimentAnalyzer(nn.Module):
 
 
 class MultiModelTrainer:
-    def __init__(self, model, train_dataloader, val_dataloader):
+    def __init__(
+        self,
+        model,
+        train_dataloader,
+        val_dataloader,
+        gradient_accumulation_steps=1,
+        scaler=None,
+    ):
         self.model = model
         self.train_dataloader = train_dataloader
         self.val_dataloader = val_dataloader
+        self.gradient_accumulation_steps = gradient_accumulation_steps
+        self.scaler = scaler
 
-        # Log dataset Sizes
-        train_size = len(train_dataloader.dataset)
-        val_size = len(val_dataloader.dataset)
-        print(f"Training dataset size: {train_size}")
-        print(f"Validation dataset size: {val_size}")
-        print(f"Batches per epoch: {len(train_dataloader):,}")
-
-        # Use Windows-compatible timestamp format (replace : with -)
-        timestamp = datetime.now().strftime("%b%d_%H-%M-%S")
-        base_dir = (
-            "runs" if "SM_MODEL_DIR" not in os.environ else "/opt/ml/output/tensorboard"
+        # Setup optimizer
+        self.optimizer = torch.optim.AdamW(
+            model.parameters(), lr=0.001, weight_decay=0.01
         )
-        log_dir = os.path.join(base_dir, f"run_{timestamp}")
+
+        # Setup device
+        self.device = next(model.parameters()).device
+
+        # Setup logging
+        timestamp = datetime.now().strftime("%b%d_%H-%M-%S")
+        log_dir = os.path.join("runs", f"run_{timestamp}")
         self.writer = SummaryWriter(log_dir)
         self.global_step = 0
 
-        # very high =1, high = 0.1-0.01, medium = 1e-1, low = 1e-4 , very low = 1e-5
-        self.optimizer = torch.optim.Adam(
-            [
-                {"params": model.text_encoder.parameters(), "lr": 8e-6},
-                {"params": model.video_encoder.parameters(), "lr": 8e-5},
-                {"params": model.audio_encoder.parameters(), "lr": 8e-5},
-                {"params": model.FusionLayer.parameters(), "lr": 5e-4},
-                {"params": model.emotion_classifier.parameters(), "lr": 5e-4},
-                {"params": model.sentiment_classifier.parameters(), "lr": 5e-4},
-            ],
-            weight_decay=1e-5,
-        )
-        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            self.optimizer, mode="min", factor=0.1, patience=2
-        )
+    def train_step(self, batch):
+        self.model.train()
 
-        self.emotion_criterion = nn.CrossEntropyLoss(label_smoothing=0.05)
-        self.sentiment_criterion = nn.CrossEntropyLoss(label_smoothing=0.05)
+        # Move batch to device
+        text_inputs = {k: v.to(self.device) for k, v in batch["text_inputs"].items()}
+        video_frames = batch["video_frames"].to(self.device)
+        audio_features = batch["audio_features"].to(self.device)
+        emotion_labels = batch["emotion"].to(self.device)
+        sentiment_labels = batch["sentiment"].to(self.device)
+
+        # Use mixed precision if available
+        if self.scaler is not None:
+            with torch.amp.autocast(device_type="cuda"):  # Updated autocast usage
+                outputs = self.model(text_inputs, video_frames, audio_features)
+                emotion_loss = F.cross_entropy(outputs["emotion"], emotion_labels)
+                sentiment_loss = F.cross_entropy(outputs["sentiment"], sentiment_labels)
+                loss = emotion_loss + sentiment_loss
+                loss = loss / self.gradient_accumulation_steps
+
+            self.scaler.scale(loss).backward()
+
+            if (self.global_step + 1) % self.gradient_accumulation_steps == 0:
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+                self.optimizer.zero_grad()
+        else:
+            outputs = self.model(text_inputs, video_frames, audio_features)
+            emotion_loss = F.cross_entropy(outputs["emotion"], emotion_labels)
+            sentiment_loss = F.cross_entropy(outputs["sentiment"], sentiment_labels)
+            loss = emotion_loss + sentiment_loss
+            loss = loss / self.gradient_accumulation_steps
+
+            loss.backward()
+
+            if (self.global_step + 1) % self.gradient_accumulation_steps == 0:
+                self.optimizer.step()
+                self.optimizer.zero_grad()
+
+        self.global_step += 1
+
+        return {
+            "total": loss.item() * self.gradient_accumulation_steps,
+            "emotion": emotion_loss.item(),
+            "sentiment": sentiment_loss.item(),
+        }
 
     def log_metrics(self, losses, metrics=None, phase="train"):
         """
@@ -209,18 +244,24 @@ class MultiModelTrainer:
 
     def train_epoch(self):
         self.model.train()
-        running_loss = {"total": 0, "emotion": 0, "sentiment": 0}
+        # Initialize running_loss with tensors instead of floats
+        running_loss = {
+            "total": torch.tensor(0.0),
+            "emotion": torch.tensor(0.0),
+            "sentiment": torch.tensor(0.0),
+        }
+
         for batch in self.train_dataloader:
-            torch.device = next(self.model.parameters()).device
+            device = next(self.model.parameters()).device
 
             text_inputs = {
-                "input_ids": batch["text_inputs"]["input_ids"].todevice,
-                "attention_mask": batch["text_inputs"]["attention_mask"].todevice,
+                "input_ids": batch["text_inputs"]["input_ids"].to(device),
+                "attention_mask": batch["text_inputs"]["attention_mask"].to(device),
             }
-            video_frames = batch["video_frames"].todevice
-            audio_features = batch["audio_features"].todevice
-            emotion_labels = batch["emotion_labels"].todevice
-            sentiment_labels = batch["sentiment_labels"].todevice
+            video_frames = batch["video_frames"].to(device)
+            audio_features = batch["audio_features"].to(device)
+            emotion_labels = batch["emotion"].to(device)
+            sentiment_labels = batch["sentiment"].to(device)
 
             # zero the gradients
             self.optimizer.zero_grad()
@@ -244,9 +285,9 @@ class MultiModelTrainer:
             self.optimizer.step()
 
             # track losses
-            running_loss["total"] += total_loss.item()
-            running_loss["emotion"] += emotion_loss.item()
-            running_loss["sentiment"] += sentiment_loss.item()
+            running_loss["total"] += total_loss.detach()
+            running_loss["emotion"] += emotion_loss.detach()
+            running_loss["sentiment"] += sentiment_loss.detach()
 
             self.log_metrics(
                 {
@@ -258,7 +299,13 @@ class MultiModelTrainer:
 
             self.global_step += 1
 
-        return {k: v / len(self.train_dataloader) for k, v in running_loss.items()}
+        # Calculate mean losses
+        num_batches = len(self.train_dataloader)
+        return {
+            "total": running_loss["total"].item() / num_batches,
+            "emotion": running_loss["emotion"].item() / num_batches,
+            "sentiment": running_loss["sentiment"].item() / num_batches,
+        }
 
     def evaluate(self, data_loader, phase="val"):
         self.model.eval()

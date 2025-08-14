@@ -1,0 +1,13 @@
+# torch, torchaudio, torchvision already come with the PyTorch container
+# (2.5.1+cpu is preinstalled). You can keep them pinned, but it's faster to omit.
+
+transformers==4.46.3
+pandas==2.2.3
+tqdm==4.65.0
+boto3==1.35.76
+opencv-python-headless==4.10.0.84
+soundfile==0.12.1           # 0.12.1 or 0.13.1 are available; 0.12.3 is not
+scikit-learn==1.5.1         # you import sklearn.metrics in your code
+tensorboard==2.18.0
+imageio-ffmpeg==0.4.9
+ffmpeg-python==0.2.0

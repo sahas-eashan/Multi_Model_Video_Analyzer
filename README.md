@@ -2,7 +2,7 @@
 
 A sophisticated multimodal sentiment and emotion analysis system that processes text, video, and audio inputs to predict emotional states and sentiment polarities. This project leverages deep learning models to extract and fuse features from multiple modalities for comprehensive video content analysis.
 
-## ðŸŽ¯ Overview
+##Overview
 
 The Multi-Model Video Analyzer combines three distinct neural network encoders to analyze:
 - **Text**: Using BERT-based language understanding
@@ -13,7 +13,7 @@ The system performs dual-task learning to predict both:
 - **Emotion Classification**: 7 classes (anger, disgust, fear, joy, neutral, sadness, surprise)
 - **Sentiment Analysis**: 3 classes (negative, neutral, positive)
 
-## ðŸ—ï¸ Architecture
+## Architecture
 
 ### Core Components
 
@@ -37,7 +37,7 @@ The system performs dual-task learning to predict both:
 - **Architecture**: Multi-layer perceptron with batch normalization and dropout
 - **Output**: Dual classification heads for emotion and sentiment
 
-## ðŸ”§ Technical Specifications
+## Technical Specifications
 
 ### Dependencies
 ```python
@@ -84,7 +84,7 @@ This project leverages AWS services for scalable machine learning operations:
 - **Model Deployment**: Real-time inference endpoints
 - **Notebook Environment**: Jupyter notebooks for development and analysis
 
-## ðŸš€ Usage
+## Usage
 
 ### Basic Inference
 ```python
@@ -126,7 +126,7 @@ train_losses = trainer.train_epoch()
 val_losses, val_metrics = trainer.evaluate(val_loader)
 ```
 
-## ðŸ“ˆ Performance Features
+## Performance Features
 
 ### Training Optimizations
 - **Gradient Clipping**: Prevents gradient explosion (max_norm=1.0)
@@ -140,7 +140,7 @@ val_losses, val_metrics = trainer.evaluate(val_loader)
 - **TensorBoard Integration**: Visual training progress
 - **AWS CloudWatch**: Infrastructure monitoring
 
-## ðŸŽ­ Emotion & Sentiment Mapping
+## Emotion & Sentiment Mapping
 
 ### Emotion Classes
 ```python
@@ -165,7 +165,7 @@ The model expects data in the following format:
 - **Audio**: Mel-spectrogram features [batch, channels, frequency, time]
 - **Labels**: Integer-encoded emotion and sentiment labels
 
-## ðŸ”¬ Research Applications
+## Research Applications
 
 This multimodal approach addresses key challenges in video content analysis:
 - **Cross-modal Feature Fusion**: Effective integration of heterogeneous data
@@ -173,18 +173,18 @@ This multimodal approach addresses key challenges in video content analysis:
 - **Robust Predictions**: Handling inconsistent single-modality signals
 - **Missing Modality**: Graceful degradation when inputs are incomplete
 
-## ðŸ¤ Contributing
+## Contributing
 
 1. Fork the repository
 2. Create feature branches for development
 3. Ensure comprehensive testing
 4. Submit pull requests with detailed descriptions
 
-## ðŸ“œ License
+## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
-## ðŸ™ Acknowledgments
+## Acknowledgments
 
 - **MELD Dataset**: Multimodal EmotionLines Dataset for emotion recognition
 - **Pretrained Models**: BERT (Google), R3D-18 (Facebook Research)

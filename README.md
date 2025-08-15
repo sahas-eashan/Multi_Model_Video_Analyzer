@@ -2,7 +2,7 @@
 
 A sophisticated multimodal sentiment and emotion analysis system that processes text, video, and audio inputs to predict emotional states and sentiment polarities. This project leverages deep learning models to extract and fuse features from multiple modalities for comprehensive video content analysis.
 
-##Overview
+## Overview
 
 The Multi-Model Video Analyzer combines three distinct neural network encoders to analyze:
 - **Text**: Using BERT-based language understanding
